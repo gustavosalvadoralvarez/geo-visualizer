@@ -25,13 +25,13 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
     </style>
   </head>
     <sql-service> 
-      <link rel="import" name="Clientes" class="source" href="../data/Clientes.csv"> 
+      <link rel="import" name="Clientes" class="source" href="../data/Clientes-Fref.csv"> 
       <link rel="import" name="Clientes" class="schema" href="../data/Clientes.json"> 
     </sql-service>
-    <geo-visualizer>
+    <geo-visualizer start='20.36,-99.99', optimizer='../lib/nn-route-opt.js'>
         <sql-view 
           name = "refraccionarias"
-          sql = "SELECT * FROM Clientes WHERE POS_ID_AGENTE = '1-34HPLS' LIMIT 7000"
+          sql = "SELECT * FROM Clientes WHERE POS_ID_AGENTE = '1-34HPLS' LIMIT 15"
           data-titlecol = "DEPOSITO"
           data-markericon = "../data/car.png">
       </sql-view>

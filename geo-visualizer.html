@@ -14,6 +14,8 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
 <link rel="import" href="../google-map/google-map-directions.html">
 <script src="./lib/utils.js"></script>
 <script src="./bower_components/async/lib/async.js"></script>
+<script src="./node_modules/cmb/index.js"></script>
+
 <!--
 An element providing a solution to no problem in particular.
 
@@ -49,24 +51,37 @@ Example:
 </dom-module>
 
 <script>
-   function combinations(arr, k){
-          var i, subI, ret = [], sub, next;
-          return arr.reduce(
-            function (acc, v, i){
-              if (k === 1){ 
-                acc = acc.concat([[v]]);
-              } else {
-                combinations(arr.slice(i+1, arr.length), k-1).forEach(
-                  function (sv, si){
-                    acc = acc.concat([[v].concat(sv)]);
-                  }
-                );
-              }
-              return acc
-            },
-            []
-          );
+
+
+  function k_combinations(set, k) {
+    var i, j, combs, head, tailcombs;
+    
+    if (k > set.length || k <= 0) {
+      return [];
+    }
+    
+    if (k == set.length) {
+      return [set];
+    }
+    
+    if (k == 1) {
+      combs = [];
+      for (i = 0; i < set.length; i++) {
+        combs.push([set[i]]);
       }
+      return combs;
+    }
+    combs = [];
+    for (i = 0; i < set.length - k + 1; i++) {
+      head = set.slice(i, i+1);
+      tailcombs = k_combinations(set.slice(i + 1), k - 1);
+      for (j = 0; j < tailcombs.length; j++) {
+        combs.push(head.concat(tailcombs[j]));
+      }
+    }
+    return combs;
+  }
+
   Polymer({
 
     is: 'geo-visualizer',
@@ -95,6 +110,10 @@ Example:
         notify: true,
         value: false
       },
+      start: {
+        type: String,
+        notify: true
+      },
       gmap: {
         type: Object
       },
@@ -102,6 +121,15 @@ Example:
         type: Object,
         value: function() { return {} } ,
         notify: true
+      },
+      optWorker: {
+        type: Object,
+        notify: true
+      },
+      optimizer: {
+        type: String,
+        notify: true,
+        reflectToAttribute: true
       },
       services: {
         type: Object,
@@ -122,71 +150,100 @@ Example:
       map.latitude = self.baseLat;
       map.longitude = self.baseLng;
       map.zoom = self.baseZoom;
-      map.addEventListener('google-map-ready', function () {
-        console.log('Map initialized...');
-        var gmap, dbView, viewMarkerImage, viewName;
-        self.gmap = gmap = map.map;
-        self.mapReady = true;
-        self.services.directions = {};
-        self.services.directions.request = new google.maps.DirectionsService();
-        self.services.directions.render = new google.maps.DirectionsRenderer();
-        self.services.directions.render.setMap(gmap);
-        self.services.distance = new google.maps.DistanceMatrixService(); 
-
-        gmap = map.map;
-        dbView = self.querySelector('sql-view'); 
-        viewName =  (dbView.getAttribute('name') || "view");
-        viewMarkerImage = (dbView.getAttribute('data-markericon') || null);
-        if (dbView.viewData){
-          console.log("Received db data...");
-          self.processViewData.call(
-            self,
-            viewName,
-            dbView.viewData,
-            (dbView.getAttribute('data-titlecol') || Object.keys(dbView.viewData[0])[0]),
-            viewMarkerImage,
-            self.renderViewMarkers.bind(self, viewName)
-          );
-        }else {
-          dbView.addEventListener('db-data', 
-            function(evnt){ 
-              console.log("Received db data...");
-              self.processViewData.call(
-                self,
-                viewName,                
-                evnt.detail,
-                (dbView.getAttribute('data-titlecol') || Object.keys(evnt.detail[0])[0]),
-                viewMarkerImage,
-                self.renderViewMarkers.bind(self, viewName)
-              );
-            }
-          )
+      map.addEventListener('google-map-ready', 
+        function mapInit() {
+          console.log('Map initialized...');
+          var gmap, dbView, viewMarkerImage, viewName, viewRoutes, optsrc;
+          self.gmap = gmap = map.map;
+          self.mapReady = true;
+          self.services.directions = {};
+          self.services.directions.request = new google.maps.DirectionsService();
+          self.services.directions.render = new google.maps.DirectionsRenderer();
+          self.services.directions.render.setMap(gmap);
+          self.services.distance = new google.maps.DistanceMatrixService(); 
+          gmap = map.map;
+          dbView = self.querySelector('sql-view'); 
+          viewName =  (dbView.getAttribute('name') || "view");
+          viewRoutes = self.createViewRoute(viewName);
+          viewMarkerImage = (dbView.getAttribute('data-markericon') || null);
+          optsrc = self.optimizer; 
+          if (!optsrc){
+            return new Error("No optimizer script url round"); 
+          }
+          console.log("Optimizer: "+optsrc);
+          self.optWorker = new Worker(optsrc); 
+          self.optWorker.onmessage = function(e){
+            viewRoutes(e.data);
+          }
+          if (dbView.viewData){
+            console.log("Received db data...");
+            self.processViewData.call(
+              self,
+              viewName,
+              dbView.viewData,
+              (dbView.getAttribute('data-titlecol') || Object.keys(dbView.viewData[0])[0]),
+              viewMarkerImage,
+              self.renderViewMarkers.bind(self, viewName)
+            );
+          } else {
+            dbView.addEventListener('db-data', 
+              function(evnt){ 
+                console.log("Received db data...");
+                self.processViewData.call(
+                  self,
+                  viewName,                
+                  evnt.detail,
+                  (dbView.getAttribute('data-titlecol') || Object.keys(evnt.detail[0])[0]),
+                  viewMarkerImage,
+                  self.renderViewMarkers.bind(self, viewName)
+                );
+              }
+            )
+          }
         }
-      });
+      );
     },
 
 
     processViewData: function(name, data, titleCol, viewImage, callback){
       console.log("Processing "+name+" data...");
-      var self, geokeys, processed;
-      self = this; 
+      var self, startloc, start, startdata, k, geokeys, start, startLatLng, processed;
+      self = this;
+      startloc = self.start.split(',').map(Number); 
+      start = new google.maps.LatLng(startloc[0], startloc[1]);
       geokeys = self.geoKeys(Object.keys(utils.car(data)));
       data = data.filter(
         function(row){
           return row[geokeys[0]] && row[geokeys[1]]
         }
       );
+      startdata = {}; 
+      for (k in data[0]){
+        if (k==='VTA_RL_PRM'){
+          startdata[k] = 0; 
+        } else {
+          startdata[k] = "NA"
+        }
+      }
       processed = {
-        data: data,
-        geocode: self.viewGeocoding(data),
+        data: [startdata].concat(data),
+        geocode: [start].concat(self.viewGeocoding(data)),
         title: titleCol,
         icon: viewImage
       };
       self.views[name] = processed;
-      if (callback){
-        callback(processed);
-      }
-      self.fire('data-acquired', name)
+      self.viewDistances(name, 
+        function (dist) {
+          callback(processed);
+          self.fire('data-acquired', name);
+          self.optWorker.postMessage({ 
+            distances: dist, 
+            tourLength: 8,
+            stops: utils.range(processed.geocode.length) 
+          });
+        }
+      );
+
     },
     geoKeys: function(dims){
       return [
@@ -212,14 +269,12 @@ Example:
       lngKey = geokeys[1]; 
       return viewData.map(
         function (row, i){
+          console.log(row);
           var rlat, rlng;
           rlat = row[latKey];
           rlng = row[lngKey];
-          if (rlat && rlng){
            // return new google.maps.LatLng(rlat, rlng);
-            return new google.maps.LatLng(Number(rlat), Number(rlng))
-          }
-          return null
+          return new google.maps.LatLng(Number(rlat), Number(rlng))
         }
       )
     },
@@ -227,8 +282,6 @@ Example:
     infoWindowHTML: function(row, titleCol){ 
       var dataItems;
       var INCOME_COL = 'VTA_RL_PRM';
-
-
       return '<table>\n' +
               '<tr>\n'+
               '<th>VENDEDOR</th>\n'+
@@ -264,33 +317,28 @@ Example:
       }
       geocoding.forEach(
         function(gc, i){ 
-          if (gc){
-            var marker, markerSpecs, inforW;
-            markerSpecs = {
-              position: gc,
-              title: titles[i],
-              map: gmap,
-              lable: titles[i]
-            };
-            if (view.icon){ 
-              markerSpecs.icon = view.icon;
-            }
-            marker = new google.maps.Marker(markerSpecs);
-            
-            google.maps.event.addListener(marker, 'click', 
-
-              function() {
-                var infoW = new google.maps.InfoWindow({ 
-                    content: self.infoWindowHTML(data[i], view.title) 
-                });
-                infoW.open(gmap, marker);
-                console.log(JSON.stringify(data[i]));
-              }
-            );
-            //infoW.open(gmap, marker);
+          var marker, markerSpecs, inforW;
+          markerSpecs = {
+            position: gc,
+            title: titles[i],
+            map: gmap,
+            lable: titles[i]
+          };
+          if (view.icon){ 
+            markerSpecs.icon = view.icon;
           }
-        },
-        []
+          marker = new google.maps.Marker(markerSpecs);
+          
+          google.maps.event.addListener(marker, 'click', 
+            function() {
+              var infoW = new google.maps.InfoWindow({ 
+                  content: self.infoWindowHTML(data[i], view.title) 
+              });
+              console.log(i);
+              infoW.open(gmap, marker);
+            }
+          );
+        }
       );
     },
 
@@ -298,7 +346,7 @@ Example:
       var self, dims, latKey, lngKey;
       console.log("Generating markers...");
       self = this;
-      dims = Object.keys(utils.car(viewData)); 
+      dims = Object.keys(viewData[0]); 
       latKey = dims.filter(
         function(k){ 
           return /lat/gi.test(k)
@@ -309,54 +357,49 @@ Example:
           return /lng|longitud/gi.test(k)
         }
       )[0]; 
-      return viewData.reduce( 
+      return viewData.slice(1).reduce( 
         function (markers, row, i){ 
           var rlat, rlng, pos, rmarker;
           rlat = row[latKey];
           rlng = row[lngKey];
 
-          if (rlat && rlng){
-            pos = new google.maps.LatLng(rlat, rlng);
-            rmarker = new google.maps.Marker({
-              position: pos, 
-              title: String(i),
-              animation: google.maps.Animation.DROP,
-            });
-            rmarker.latitude = parseInt(rlat, 10);
-            rmarker.longitude = parseInt(rlng, 10); 
-            markers = markers.concat(rmarker);
-          }
+          pos = new google.maps.LatLng(parseInt(rlat,10), parseInt(rlng,10));
+          rmarker = new google.maps.Marker({
+            position: pos, 
+            title: String(i),
+            animation: google.maps.Animation.DROP,
+          });
+          markers = markers.concat(rmarker);
           return markers
         }, 
         []
       ); 
     },
 
-    viewDistances: function(viewName, start, callback){
-      var self, viewKey, dist, view, getDist;
+    viewDistances: function(viewName, callback){
+      var self, viewKey, dist, view, getDist, distDir, distr,
+          i, j, dl, dist, k;
       self = this; 
-      viewKey = viewDistanceKey(viewName, start);
-      dist = window.localStorage.getItem(viewKey);
+      view = self.views[viewName]; 
+      distDir = localStorage.getItem("DISTDIR");
+      if (!distDir){
+        distDir = [];
+        localStorage.setItem("DISTDIR", distDir);  
+      }
       getDist = self.services.distance.getDistanceMatrix;
-      console.log(dist);
-      if (dist){
-        var view, ss, gc, gcr, dm;
-        view = self.views[viewName]; 
+      if (distDir.indexOf(viewName) === -1){
+        var ss, sbss, gc, gcr, dm;
         gc = view.geocode;
-        gc.unshift(start);
         gcr = utils.range(gc.length);
-        ss = combinations(arraySubsets(gcr, 10), 2); 
-        dm = gcr.map(function(){ return gcr });
-        console.log(ss);
-        console.log(dm);
-        async.reduce(
+        sbss = arraySubsets(gcr, 10);
+        ss = k_combinations(sbss, 2).concat(sbss.map(
+          function(v){
+            return [v,v]
+          })
+        ); 
+        async.eachSeries(
           ss,
-          dm,
-          function getBatch(acc, s, cb){
-            var tm, dt; 
-            dt = new Date();
-            tm = dt.getTime();
-            console.log(acc);
+          function getBatch(s, cb){
             getDist({
                 origins: ssgc(s[0]),
                 destinations: ssgc(s[1]),
@@ -368,43 +411,54 @@ Example:
                     function(v0, i0){
                       s[1].forEach(
                         function(v1, i1){
-                          acc[v0][v1] = acc[v1][v0] = res.rows[i0].elements[i1];
+                          var vv, kk;
+
+                          kk = v1 > v0 
+                                ? v0+','+v1
+                                : v1+','+v0;
+                          vv = res.rows[i0].elements[i1].distance.value;
+                          localStorage.setItem(kk, vv);
                         }
                       )
                     }
                   );
-                  console.log(acc);
-                  ctm = 10000 - (dt.getTime() - tm); 
-                  console.log(ctm);
-                  if (ctm > 0){
-                    setTimeout(function(){cb(null, acc)}, ctm);
-                    return
-                  }
-                  cb(null, acc);
+                  setTimeout(function(){cb(null)}, 20000);
                   return
                 }
-                cb(status);
+                console.log(status);
+                setTimeout(function(){getBatch(s, cb)}, 20000);
                 return 
               }
             );
+            return
           },
-          function (err, res){
+          function (err){
             if (err){
               console.log(err);
               callback(err);
               return
             }
-            console.log("DISTANCES");
-
-            console.log(res);
-            window.localStorage.setItem(viewKey, res);
-            callback(null, res); 
+            console.log("FINISHED GATHERING "+viewName+" DISTANCES.");
+            localStorage.setItem("DISTDIR", 
+              localStorage.getItem("DISTDIR").concat(viewName)
+            );
           }
         );
-      } else {
-        console.log(dist);
-        callback(null, dist);
+      } 
+      console.log("HERE");
+      i = 0; 
+      dl = view.geocode.length; 
+      dist = {};
+
+      for (; i < dl; i++){
+        j = i;
+        for (; j < dl; j++){
+            k = i+','+j;
+            dist[k] = localStorage.getItem(k); 
+        }
       }
+      console.log(dist);
+      callback(dist);
 
       function ssgc(ix){
         return ix.map(function(v){ return gc[v] })
@@ -416,11 +470,7 @@ Example:
         var nsubs, subs, ln;
         ln = arr.length;
         nsubs = Math.floor(ln/slen);
-        console.log(ln);
-        console.log(nsubs);
         subs = range(nsubs).map(function(sn){ 
-          console.log(sn); 
-          console.log(sn*slen);
           return arr.slice(sn*slen, (sn+1)*slen) }); 
         if (nsubs*slen < ln){
           subs = subs.concat([arr.slice(nsubs*slen, ln)]);
@@ -428,113 +478,190 @@ Example:
         return subs
       }
     },
-    calculateViewRoute: function(viewName, startLoc){ 
-      var self, view, gc;
+
+    createViewRoute: function(viewName){
+      var self;
       self = this; 
-      start =  startLoc.split(',').map(Number);
-      start = new google.maps.LatLng(start[0], start[1]);
-      view = self.views[viewName]; 
-      gc = view.geocode;
-      gc.unshift(start); 
-      self.viewDistances(viewName, start, 
-        function(err, res){
-          if (err){ console.log(err); return }
-          var possibleRoutes;
-          possibleRoutes = possibleRoutes(view.geocode.length);
-          console.log(possibleRoutes);
-          console.log(res);
-        }
-      );
-      function distanceOptimization(distArr){
-          console.log("CALCULATING DISTANCE OPTIMIZATION")
-          var candidates, distances;
-          candidates = possibleRoutes(view.geocode.length); 
-          console.log(candidates);
-          distances = candidates.map(routeDistance(distArr)); 
-          console.log(distances);
-          return candidates[distances.indexOf(Math.min.apply(null, distances))].map(
-          function(v){
-            return gc[v]
+      return function createRoute(route){
+        var vw, vwgc, rlc;
+        vw = self.views[viewName]; 
+        vwgc = vw.geocode;
+        rlc = route.map(function(v){ return vwgc[v] });
+        console.log(rlc);
+        self.services.directions.request.route(
+          directionsRequest(rlc), 
+          function (res, status){ 
+            console.log("Route request fulfilled with status: "+status);
+            if (status == google.maps.DirectionsStatus.OK) {
+              self.services.directions.render.setDirections(res);
+              console.log(routeTime(res));
+              console.log(res);
+            }
           }
         )
       }
-      
-      function possibleRoutes(nstops){
-        console.log("CALCULATING POSSIBLE ROUTES");
-        console.log(nstops);
-        return combinations(utils.range(nstops), 7).map(
-          function (route){
-            console.log(route);
-            return [0].concat(route.map(function(v){ return v+1}))
-          }
-        ); 
-      }
-      function routeDistance(distArr){
-        return function (route){
-          return route.slice(1).reduce(
-            function(d, v, i, arr){
-              console.log(d);
-              return d + distArr[v][route[i-1]].distance.value
-            },
-            0
+      function directionsRequest(route){
+        var lr;
+        lr = route.length;
+        return {
+          origin: route[0],
+          destination: route[lr-1],
+          travelMode: google.maps.TravelMode.DRIVING,
+          waypoints: route.slice(1, lr-1).map( 
+            function(v){
+              return {
+                location: v,
+                stopover: true
+              }
+            }
           )
         }
       }
+      function routeTime(res){
+        return res.routes[0].legs.reduce(
+          function (acc, v, i){
+            return acc + v.duration.value
+          },
+          0)/60
+      }
+    },
+    calculateViewRoute: function(viewName){ 
+      var self, view, gc;
+      self = this; 
+      start =  self.start.split(',').map(Number);
+      start = new google.maps.LatLng(start[0], start[1]);
+      view = self.views[viewName]; 
+      gc = view.geocode;
+      minDistance();
+      //maxProfit();
+      function minDistance(){
+        var pRoutes, nr, pRoutes, optRoute, r, d, j, optRouteDist, optRouteStops;
+        pRoutes = new Comb(utils.range(gc.length, 1), 7);
+        optRouteDist = Infinity;
+        optRoute = [];
+        while (r = pRoutes.next().value){
+          r = [0].concat(r.map(function(v){ return v}));
+          d = 0;
+          j = 0; 
+          while(j < 7){
+            var ix1, ix2, k;
+            ix1 = r[j]; 
+            ix2 = r[j+1]; 
+            k = ix2 > ix1 
+                ? String(ix1)+','+ String(ix2)
+                : String(ix2)+','+ String(ix1); 
+
+            d += Number(window.localStorage.getItem(k));
+            j += 1
+          }
+          if (optRouteDist > d){
+            optRoute = r;
+            optRouteDist = d;
+          }
+          console.log("step");
+        }
+        console.log(optRoute);
+        optRouteStops = optRoute.map(function(v){ return gc[v] });
+        console.log(optRouteStops);
+        console.log(directionsRequest(optRouteStops));
+
+        self.services.directions.request.route(
+          directionsRequest(optRouteStops), 
+          function (res, status){ 
+            console.log("Route request fulfilled with status: "+status);
+            if (status == google.maps.DirectionsStatus.OK) {
+              self.services.directions.render.setDirections(res);
+              console.log(routeTime(res));
+              console.log(routeIncome(view.data, optRoute));
+              console.log(res);
+            }
+          }
+        )
+      }
+      function maxProfit(){
+        var pRoutes, prf, MPKM, LPKM, MXPPL, nr, pRoutes, optRoute, r, d, j, optRoutePrf, optRouteStops;
+        pRoutes = new Comb(utils.range(gc.length, 1), 7);
+        prf = view.data.map(function(v){ return Number(v.VTA_RL_PRM) });
+        console.log(prf);
+        optRoutePrf = 0;
+        optRoute = [];
+        MPKM = 1/1000;
+        LPKM = 1/13;
+        MXPPL = 13.57;
+        C = MPKM*LPKM*MXPPL;
+        while (r = pRoutes.next().value){
+          r = [0].concat(r);
+          d = 0;
+          j = 0; 
+          while(j < 7){
+            var ix1, ix2, k;
+            ix1 = r[j]; 
+            ix2 = r[j+1]; 
+            k = ix2 > ix1 
+                ? String(ix1)+','+ String(ix2)
+                : String(ix2)+','+ String(ix1); 
+            d = d + prf[j] - C*parseInt(window.localStorage.getItem(k), 10);
+            j += 1;
+          }
+          d = d + prf[r[7]];
+          console.log(r);
+          console.log(d);
+          console.log(optRoutePrf);
+          if (optRoutePrf < d){
+            optRoute = r;
+            optRoutePrf = d;
+          }
+        }
+        console.log(optRoute);
+        optRouteStops = optRoute.map(function(v){ return gc[v] });
+        console.log(optRouteStops);
+        console.log(directionsRequest(optRouteStops));
+
+        self.services.directions.request.route(
+          directionsRequest(optRouteStops), 
+          function (res, status){ 
+            console.log("Route request fulfilled with status: "+status);
+            if (status == google.maps.DirectionsStatus.OK) {
+              self.services.directions.render.setDirections(res);
+              console.log(routeTime(res));
+              console.log(routeIncome(view.data, optRoute));
+              console.log(res);
+            }
+          }
+        )
+      }
+      function routeTime(res){
+        return res.routes[0].legs.reduce(
+          function (acc, v, i){
+            return acc + v.duration.value
+          },
+          0)/60
+      }
+      function routeIncome(data, route){
+        return route.slice(1).reduce(
+          function (acc, v, i){
+            return acc + Number(data[v].VTA_RL_PRM);
+          },
+          0)
+      }
       function directionsRequest(route){
-        var rl;
-        rl = route.length;
+        var lr;
+        lr = route.length;
         return {
           origin: route[0],
-          destination: route[rl-1],
-          waypoints: route.slice(1, rl-2),
-          optimizeWaypoints: true, 
-          travelMode: "DRIVING"
-        }
-      }
-
-      // wypnts = stopGeocodes.slice(1, lstStop).map( 
-      //   function (w){ 
-      //     return { 
-      //       location : w,
-      //       stopover: true
-      //     }
-      //   }
-      // );
-      // request = { 
-      //   origin: start,
-      //   destination: stopGeocodes[lstStop],
-      //   waypoints: wypnts,
-      //   optimizeWaypoints: true, 
-      //   travelMode: "DRIVING"
-      // }
-      // console.log("Requesting route: "); 
-      // console.log(request);
-      // self.services.directions.request.route(request, 
-      //   function (res, status){ 
-      //     console.log("Route request fulfilled with status: "+status);
-      //     if (status == google.maps.DirectionsStatus.OK) {
-      //       self.services.directions.render.setDirections(res);
-      //     }
-      //   }
-      // );
-     function valueFilter(d, k, vs){
-        var ixs, retFn;
-        ixs = d.reduce(
-          function (a, v, i){ 
-            if (vs.indexOf(v[k]) !== -1){
-              a = a.concat(i); 
+          destination: route[lr-1],
+          travelMode: google.maps.TravelMode.DRIVING,
+          waypoints: route.slice(1, lr-1).map( 
+            function(v){
+              return {
+                location: v,
+                stopover: true
+              }
             }
-            return a
-          },
-          []
-        ); 
-        retFn = function (v, i){
-          return ixs.indexOf(i) !== -1
+          )
         }
-        retFn.filtered = ixs.map(function(v){ return d[v] });
-        return retFn
       }
-    }
+    },
   });
 
 </script>
