@@ -28,10 +28,10 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
       <link rel="import" name="Clientes" class="source" href="../data/Clientes-Fref.csv"> 
       <link rel="import" name="Clientes" class="schema" href="../data/Clientes.json"> 
     </sql-service>
-    <geo-visualizer start='20.36,-99.99', optimizer='../lib/nn-route-opt.js'>
+    <geo-visualizer start='20.36,-99.99', optimizer='../lib/dijkstra.js'>
         <sql-view 
-          name = "refraccionarias"
-          sql = "SELECT * FROM Clientes WHERE POS_ID_AGENTE = '1-34HPLS' LIMIT 15"
+          name = "1-34HQI8"
+          sql = "SELECT * FROM Clientes WHERE POS_ID_AGENTE = '1-34HQI8' LIMIT 35"
           data-titlecol = "DEPOSITO"
           data-markericon = "../data/car.png">
       </sql-view>
