@@ -27,6 +27,7 @@ function duckType(o){
 utils.duckType = duckType;
 
 function asArray(thing){
+	console.log(duckType(thing))
 	switch(duckType(thing)){
 		case 'array':
 			return thing
@@ -338,13 +339,6 @@ function keyMap(ks){
 
 utils.keyMap = keyMap;
 
-function valueFilter(k, vs){
-	return function (o){
-		return vs.indexOf(o[k]) !== -1
-	}
-}
-
-utils.valueFilter = valueFilter; 
 
 function dCopy(o){
 	return JSON.parse(JSON.stringify(o))
@@ -529,25 +523,3 @@ if (typeof module !== 'undefined' && module.exports){
 		module.exports[k] = utils[k];
 	}
 }
-
-
-function combinations(arr, k){
-    var i, subI, ret = [], sub, next;
-    return arr.reduce(
-    	function (acc, v, i){
-    		if (k === 1){ 
-    			acc = acc.concat([[v]]);
-    		} else {
-    			combinations(arr.slice(i+1, arr.length), k-1).forEach(
-    				function (sv, si){
-    					acc = acc.concat([[v].concat(sv)]);
-    				}
-    			);
-    		}
-    		return acc
-    	},
-    	[]
-    );
-}
-
-utils.combinations = combinations;

@@ -15,8 +15,8 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
     <title>geo-visualizer Demo</title>
     <script src="../../webcomponentsjs/webcomponents-lite.js"></script>
     <link rel="import" href="../geo-visualizer.html">
-    <link rel="import" href="../../indexed-db-store/sql-service.html">
-    <link rel="import" href="../../indexed-db-store/sql-view.html">
+    <link rel="import" href="../../sql-service/sql-service.html">
+    <link rel="import" href="../../sql-service/sql-view.html">
     <style> 
      body {
       margin: 0;
@@ -30,8 +30,8 @@ subject to an additional IP rights grant found at http://polymer.github.io/PATEN
     </sql-service>
     <geo-visualizer start='20.36,-99.99', optimizer='../lib/dijkstra.js'>
         <sql-view 
-          name = "1-34HQI8"
-          sql = "SELECT * FROM Clientes WHERE POS_ID_AGENTE = '1-34HQI8' LIMIT 35"
+          name = "1-34HJF4"
+          sql = "SELECT * FROM Clientes WHERE POS_ID_AGENTE = '1-34HJF4' LIMIT 35"
           data-titlecol = "DEPOSITO"
           data-markericon = "../data/car.png">
       </sql-view>
